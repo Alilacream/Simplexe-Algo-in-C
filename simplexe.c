@@ -1,63 +1,103 @@
 #include <stdio.h>
 #define MAX_SLACK 10
 #define MAX_VARS 10
+#define big_M 10000.0
 
 struct simplexe {
     int m; //number of constraints
-    int n; //number of variable (slack ones not included)
-    double tableau[MAX_SLACK + 1][MAX_SLACK + MAX_VARS + 1]; // tableau including RHS and slack variables
+    int n; //number of variables (slack ones not included)
+    int is_min; // 0 for max 1 for min
+    double tableau[MAX_SLACK + 1][MAX_VARS + MAX_SLACK + MAX_SLACK + 1]; //evident 
 };
-
-//for these first ones i'll try to solve for max (min is a tad more complicated so it will take me more time)
-
 
 //function to enter fill the table
 void inputproblem(struct simplexe *s) {
     
-    
-    printf("Enter the number of constrains: ");
+    printf("Is it a minimizing problem? (0 for max 1 for min) \n");
+    scanf("%d", &s->is_min);
+
+    printf("Enter the number of constraints: ");
     scanf("%d", &s->m);
     
     printf("Enter the number of original variables: ");
     scanf("%d", &s->n);
 
-    for (int i=0; i <= s->m; i++) //init the tab at 0 so when everything else is filled the one who don't are alr at 0
-    {
-        for (int j=0; j <= s->m + s->n ; j++) {
-            s->tableau[i][j]=0;
+    // Determine RHS column position
+    int rhs_col;
+    if (s->is_min == 0) {
+        rhs_col = s->n + s->m; // original + slack
+    } else {
+        rhs_col = s->n + s->m + s->m; // original + surplus + artificial
+    }
+
+    // Initialize tableau to 0
+    for (int i = 0; i <= s->m; i++) {
+        for (int j = 0; j <= rhs_col; j++) {
+            s->tableau[i][j] = 0;
         }
     }
 
-    
-    printf("Enter the coefficients of the target (equation economique): ");
-    for (int i=0; i < s->n; i++) {
+    // Enter objective function coefficients
+    printf("Enter the coefficients of the target (equation econom): ");
+    for (int i = 0; i < s->n; i++) {
         scanf("%lf", &s->tableau[s->m][i]);
     }
-    
-    printf("Entrer the coefficients of the constraints (end with RHS): ");
-    for (int i=0; i < s->m; i++)
-    {
-        printf("Constraint %d: ", i+1);
-        for (int j=0; j < s->n ; j++) {
-            scanf("%lf", &s->tableau[i][j]);
+
+    // For minimization, add Big M coefficients for artificial variables
+    if (s->is_min == 1) {
+        for (int i = 0; i < s->m; i++) {
+            s->tableau[s->m][s->n + s->m + i] = big_M;
         }
-        scanf("%lf", &s->tableau[i][s->n + s->m]); // adding the RHS skiping to the last column of each row
     }
     
-    for(int i=0; i<s->m; i++) {
-        s->tableau[i][s->n + i] = 1.0; //adding the slack vars coeff
+    // Enter constraints
+    printf("Enter the coefficients of the constraints (end with RHS): ");
+    for (int i = 0; i < s->m; i++) {
+        printf("Constraint %d: ", i + 1);
+        for (int j = 0; j < s->n; j++) {
+            scanf("%lf", &s->tableau[i][j]);
+        }
+        // RHS at appropriate column
+        scanf("%lf", &s->tableau[i][rhs_col]);
+    }
+    
+    if (s->is_min == 0) {
+        // Maximization: add slack variables
+        for (int i = 0; i < s->m; i++) {
+            s->tableau[i][s->n + i] = 1.0;
+        }    
+    } else {
+        // Minimization: add surplus variables
+        for (int i = 0; i < s->m; i++) {
+            s->tableau[i][s->n + i] = -1.0;
+        }
+        // Add artificial variables
+        for (int i = 0; i < s->m; i++) {
+            s->tableau[i][s->n + s->m + i] = 1.0;
+        }  
+    }
+
+    // For minimization with Big M: eliminate artificial variables from objective
+    if (s->is_min == 1) {
+        for (int j = 0; j <= rhs_col; j++) {
+            for (int i = 0; i < s->m; i++) {
+                s->tableau[s->m][j] -= s->tableau[i][j] * big_M;
+            }
+        }
     }
 }
 
 //function to print it
 void print_tableau(struct simplexe *s) {
+    int rhs_col = (s->is_min == 0) ? (s->n + s->m) : (s->n + s->m + s->m);
+    
     printf("\n");
-    for (int i=0; i <= s->m; i++) {
+    for (int i = 0; i <= s->m; i++) {
         if (i == s->m) {
             printf("-------------------------------------------\n");
         }
-        for (int j=0; j <= s->m + s->n; j++) {
-            if (j == s->m + s->n) {
+        for (int j = 0; j <= rhs_col; j++) {
+            if (j == rhs_col) {
                 printf(" | ");
             }
             printf("   %.2f   ", s->tableau[i][j]);
@@ -67,9 +107,21 @@ void print_tableau(struct simplexe *s) {
 }
 
 int isoptimal(struct simplexe *s) {
-    for (int i=0; i < s->n + s->m; i++) {
-        if (s->tableau[s->m][i] > 0 ) {
-            return 0; //not an optimal solution;
+    int total_vars = (s->is_min == 0) ? (s->n + s->m) : (s->n + s->m + s->m);
+    
+    if (s->is_min == 0) {
+        // For maximization: check if all coefficients are <= 0
+        for (int i = 0; i < total_vars; i++) {
+            if (s->tableau[s->m][i] > 0) {
+                return 0; //not optimal
+            }
+        }
+    } else {
+        // For minimization: check if all coefficients are >= 0
+        for (int i = 0; i < total_vars; i++) {
+            if (s->tableau[s->m][i] < 0) {
+                return 0; //not optimal
+            }
         }
     }
     return 1; //optimal solution found
@@ -77,28 +129,47 @@ int isoptimal(struct simplexe *s) {
 
 //function to find the entering col
 int find_pivot_col(struct simplexe *s) {
-    double max = s->tableau[s->m][0];
-    int max_index = 0;
+    int total_vars = (s->is_min == 0) ? (s->n + s->m) : (s->n + s->m + s->m);
+    
+    if (s->is_min == 0) {
+        // For maximization: find most positive
+        double max = s->tableau[s->m][0];
+        int max_index = 0;
 
-    for (int i=0; i<s->n + s->m; i++) {
-        if (s->tableau[s->m][i] > max) {
-            max = s->tableau[s->m][i];
-            max_index = i;
+        for (int i = 0; i < total_vars; i++) {
+            if (s->tableau[s->m][i] > max) {
+                max = s->tableau[s->m][i];
+                max_index = i;
+            }
         }
+        return max_index;
+    } else {
+        // For minimization: find most negative
+        double min = s->tableau[s->m][0];
+        int min_index = 0;
+
+        for (int i = 0; i < total_vars; i++) {
+            if (s->tableau[s->m][i] < min) {
+                min = s->tableau[s->m][i];
+                min_index = i;
+            }
+        }
+        return min_index;
     }
-    return max_index;
 }
 
 //function to find the exiting row
 int find_pivot_row(struct simplexe *s, int max_index) {
+    int rhs_col = (s->is_min == 0) ? (s->n + s->m) : (s->n + s->m + s->m);
+    
     double min = 1e9;
-    int min_index = -1; // if it stays -1 then it not found we have a probleme in our algo
-    for (int i=0; i<s->m; i++) {
-        if(s->tableau[i][max_index] <= 0) {
+    int min_index = -1; // if it stays -1 then not found, we have a problem in our algo
+    for (int i = 0; i < s->m; i++) {
+        if (s->tableau[i][max_index] <= 0) {
             continue;
         } else {
-            double ratio = s->tableau[i][s->m+s->n]/s->tableau[i][max_index];
-            if (ratio<min) {
+            double ratio = s->tableau[i][rhs_col] / s->tableau[i][max_index];
+            if (ratio < min) {
                 min = ratio;
                 min_index = i; 
             }
@@ -109,28 +180,31 @@ int find_pivot_row(struct simplexe *s, int max_index) {
 
 //pivot function to go to the next iteration
 void pivot(struct simplexe *s, int pivotcol, int pivotrow) {
-    double pivot = s->tableau [pivotrow][pivotcol];
-    for (int i=0 ; i<= s->n + s->m; i++) {
-        s->tableau[pivotrow][i] /= pivot; //normalize the pivot row by / on the pivot
+    int rhs_col = (s->is_min == 0) ? (s->n + s->m) : (s->n + s->m + s->m);
+    
+    double pivot = s->tableau[pivotrow][pivotcol];
+    for (int i = 0; i <= rhs_col; i++) {
+        s->tableau[pivotrow][i] /= pivot; //normalize the pivot row
     }
-    for (int i=0; i <= s->m; i++) {
+    for (int i = 0; i <= s->m; i++) {
        if (i == pivotrow) continue;
 
        double factor = s->tableau[i][pivotcol];
-       for (int j=0; j<=s->n+s->m; j++) {
-        s->tableau[i][j] -= factor * s->tableau[pivotrow][j]; //updating each entry of the table (square methode)
+       for (int j = 0; j <= rhs_col; j++) {
+        s->tableau[i][j] -= factor * s->tableau[pivotrow][j];
        }
     }
 }
 
 //solve
-void solve (struct simplexe *s) {
-    int optimal = isoptimal(s);
-    while(optimal==0) {
-        optimal = isoptimal(s);
+void solve(struct simplexe *s) {
+    while (isoptimal(s) == 0) {
         int pivot_col = find_pivot_col(s);
         int pivot_row = find_pivot_row(s, pivot_col);
-        if (pivot_row == -1) printf("out of bounds"); //see find_pivot_row function for more details
+        if (pivot_row == -1) {
+            printf("Unbounded solution or error!\n");
+            return;
+        }
         pivot(s, pivot_col, pivot_row);
         print_tableau(s);
     } 
@@ -138,6 +212,8 @@ void solve (struct simplexe *s) {
 }
 
 void print_solution(struct simplexe *s) {
+    int rhs_col = (s->is_min == 0) ? (s->n + s->m) : (s->n + s->m + s->m);
+    
     printf("\nOptimal Solution:\n");
     printf("================\n");
     
@@ -147,7 +223,6 @@ void print_solution(struct simplexe *s) {
     // For each original variable (columns 0 to n-1)
     for (int j = 0; j < s->n; j++) {
         // Check if this column is a basic variable (has exactly one 1 and rest 0s)
-        int is_basic = 0;
         int basic_row = -1;
         int count_ones = 0;
         int count_zeros = 0;
@@ -164,8 +239,7 @@ void print_solution(struct simplexe *s) {
         
         // If column has exactly one 1 and rest are 0s, it's a basic variable
         if (count_ones == 1 && count_zeros == s->m) {
-            is_basic = 1;
-            solution[j] = s->tableau[basic_row][s->n + s->m]; // RHS value
+            solution[j] = s->tableau[basic_row][rhs_col]; // RHS value
         } else {
             solution[j] = 0.0; // Non-basic variable = 0
         }
@@ -177,16 +251,17 @@ void print_solution(struct simplexe *s) {
     }
     
     // Print the optimal objective function value (Z value)
-    printf("\nOptimal objective value (Z) = %.2f\n", (s->tableau[s->m][s->n + s->m])*-1);
+    printf("\nOptimal objective value (Z) = %.2f\n", (s->tableau[s->m][rhs_col]) * -1);
 }
 
-
-int main () {
+int main() {
     struct simplexe s;
     inputproblem(&s); 
     printf("Tableau N:0");
     print_tableau(&s);
     solve(&s);
     print_solution(&s);
+    getchar();
+    getchar();
     return 0;
 }
